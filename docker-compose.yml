@@ -41,7 +41,7 @@ services:
       DATABASE_URL: postgresql://postgres:postgres@postgres:5432/astro
       RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672
     ports:
-      - "3001:3001"
+      - "8003:8003"
 
 volumes:
   postgres_data:

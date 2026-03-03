@@ -1,47 +1,15 @@
 services:
-
-  postgres:
-    image: postgres:15
-    restart: always
-    environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: astro
-    ports:
-      - "5433:5432"
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
-
-  rabbitmq:
-    image: rabbitmq:3-management
-    restart: always
-    ports:
-      - "5672:5672"
-      - "15672:15672"
-    healthcheck:
-      test: ["CMD", "rabbitmq-diagnostics", "ping"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
-
   wallet-service:
     build: .
     restart: always
-    depends_on:
-      postgres:
-        condition: service_healthy
-      rabbitmq:
-        condition: service_healthy
     environment:
-      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/astro
-      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672
+      DATABASE_URL: postgresql://postgres:postgres@dhwaniastro-postgres:5432/astro
+      RABBITMQ_URL: amqp://guest:guest@dhwaniastro-rabbitmq:5672
     ports:
       - "8003:8003"
+    networks:
+      - dhwaniastro-net  # attach to external network so it can reach Postgres & RabbitMQ
 
-volumes:
-  postgres_data:
+networks:
+  dhwaniastro-net:
+    external: true

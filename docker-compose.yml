@@ -1,14 +1,17 @@
 services:
   wallet-service:
     build: .
+    container_name: wallet-service
     restart: always
     environment:
       DATABASE_URL: postgresql://postgres:postgres@dhwaniastro-postgres:5432/astro
       RABBITMQ_URL: amqp://guest:guest@dhwaniastro-rabbitmq:5672
     ports:
       - "8003:8003"
+    mem_limit: 384m
+    cpus: 0.7
     networks:
-      - dhwaniastro-net  # attach to external network so it can reach Postgres & RabbitMQ
+      - dhwaniastro-net
 
 networks:
   dhwaniastro-net:

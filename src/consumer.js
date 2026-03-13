@@ -11,21 +11,18 @@ const { Pool } = pg
 
 import { PrismaPg } from "@prisma/adapter-pg"
 
-
 /**
  * PostgreSQL Pool
  */
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
-  max: 10, // limit connections
+  max: 10,
 })
 
-
 /**
- * Prisma Adapter (Prisma v7)
+ * Prisma Adapter
  */
 const adapter = new PrismaPg(pool)
-
 
 /**
  * Prisma Client
@@ -35,48 +32,65 @@ const prisma = new PrismaClient({
   log: ["error", "warn"],
 })
 
-
 let connection
 let channel
 
+const QUEUE_NAME = "payment.success"
 
 async function startConsumer() {
   try {
-
     console.log("Connecting to RabbitMQ...")
 
     connection = await amqp.connect(process.env.RABBITMQ_URL)
 
+    connection.on("error", (err) => {
+      console.error("RabbitMQ connection error:", err.message)
+    })
+
+    connection.on("close", () => {
+      console.warn("RabbitMQ connection closed. Reconnecting...")
+      setTimeout(startConsumer, 5000)
+    })
+
     channel = await connection.createChannel()
 
-    const queue = "payment.success"
+    /**
+     * Ensure queue exists
+     */
+    await channel.assertQueue(QUEUE_NAME, {
+      durable: true,
+    })
 
     /**
-     * VERY IMPORTANT
-     * Prevent multiple parallel transactions
+     * Prevent parallel processing
      */
     channel.prefetch(1)
 
-    console.log(`Waiting for messages in queue: ${queue}`)
-
+    console.log(`Waiting for messages in queue: ${QUEUE_NAME}`)
 
     channel.consume(
-      queue,
+      QUEUE_NAME,
       async (msg) => {
-
         if (!msg) return
 
-        const data = JSON.parse(msg.content.toString())
+        let data
+
+        try {
+          data = JSON.parse(msg.content.toString())
+        } catch (err) {
+          console.error("Invalid JSON message")
+          channel.nack(msg, false, false)
+          return
+        }
 
         console.log("Received message:", data)
 
         try {
-
           await prisma.$transaction(
             async (tx) => {
 
               /**
-               * 1. UPSERT WALLET
+               * UPSERT WALLET
                */
               const wallet = await tx.userWallet.upsert({
                 where: {
@@ -94,9 +108,8 @@ async function startConsumer() {
                 },
               })
 
-
               /**
-               * 2. CREATE TRANSACTION
+               * CREATE WALLET TRANSACTION
                */
               await tx.walletTransaction.create({
                 data: {
@@ -108,26 +121,27 @@ async function startConsumer() {
                   description: "Recharge successful",
                 },
               })
-
             },
             {
-              timeout: 10000, // prevent hanging tx
+              timeout: 10000,
             }
           )
-
 
           console.log(
             `SUCCESS: user=${data.userId}, coins=${data.coins}, payment=${data.paymentId}`
           )
 
+          /**
+           * Acknowledge message
+           */
           channel.ack(msg)
 
         } catch (err) {
 
-          console.error("Processing failed:", err.message)
+          console.error("Processing failed:", err)
 
           /**
-           * reject message
+           * Reject message (do not requeue)
            */
           channel.nack(msg, false, false)
         }
@@ -140,16 +154,14 @@ async function startConsumer() {
 
   } catch (err) {
 
-    console.error("Consumer startup failed:", err)
+    console.error("Consumer startup failed:", err.message)
 
     /**
-     * Retry connection
+     * Retry after 5 sec
      */
     setTimeout(startConsumer, 5000)
-
   }
 }
-
 
 /**
  * Graceful shutdown
@@ -177,10 +189,8 @@ async function shutdown() {
   process.exit(0)
 }
 
-
 process.on("SIGINT", shutdown)
 process.on("SIGTERM", shutdown)
-
 
 /**
  * Start Consumer

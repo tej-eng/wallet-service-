@@ -1,57 +1,61 @@
 // src/consumer.js
 
-import 'dotenv/config'
-import amqp from 'amqplib'
+import "dotenv/config"
+import amqp from "amqplib"
 
-import pkg from '@prisma/client'
+import pkg from "@prisma/client"
 const { PrismaClient } = pkg
 
-import pg from 'pg'
+import pg from "pg"
 const { Pool } = pg
 
-import { PrismaPg } from '@prisma/adapter-pg'
+import { PrismaPg } from "@prisma/adapter-pg"
 
 
 /**
- * PostgreSQL connection pool
- * IMPORTANT:
- * In docker-compose use service name "postgres"
- * NOT localhost
+ * PostgreSQL Pool
  */
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
+  max: 10, // limit connections
 })
 
 
 /**
- * Prisma adapter (required for Prisma v7)
+ * Prisma Adapter (Prisma v7)
  */
 const adapter = new PrismaPg(pool)
 
 
 /**
- * Prisma client instance
+ * Prisma Client
  */
 const prisma = new PrismaClient({
   adapter,
-  log: ['error', 'warn'],
+  log: ["error", "warn"],
 })
 
 
-/**
- * RabbitMQ consumer startup
- */
+let connection
+let channel
+
+
 async function startConsumer() {
   try {
+
     console.log("Connecting to RabbitMQ...")
 
-    const conn = await amqp.connect(process.env.RABBITMQ_URL)
+    connection = await amqp.connect(process.env.RABBITMQ_URL)
 
-    const channel = await conn.createChannel()
+    channel = await connection.createChannel()
 
     const queue = "payment.success"
 
-    await channel.assertQueue(queue, { durable: true })
+    /**
+     * VERY IMPORTANT
+     * Prevent multiple parallel transactions
+     */
+    channel.prefetch(1)
 
     console.log(`Waiting for messages in queue: ${queue}`)
 
@@ -62,86 +66,70 @@ async function startConsumer() {
 
         if (!msg) return
 
+        const data = JSON.parse(msg.content.toString())
+
+        console.log("Received message:", data)
+
         try {
 
-          const data = JSON.parse(msg.content.toString())
+          await prisma.$transaction(
+            async (tx) => {
 
-          console.log("Received message:", data)
-
-
-          await prisma.$transaction(async (tx) => {
-
-            /**
-             * 1. Upsert wallet
-             */
-            const wallet = await tx.userWallet.upsert({
-
-              where: {
-                userId: data.userId,
-              },
-
-              update: {
-                balanceCoins: {
-                  increment: data.coins,
+              /**
+               * 1. UPSERT WALLET
+               */
+              const wallet = await tx.userWallet.upsert({
+                where: {
+                  userId: data.userId,
                 },
-              },
+                update: {
+                  balanceCoins: {
+                    increment: data.coins,
+                  },
+                },
+                create: {
+                  userId: data.userId,
+                  balanceCoins: data.coins,
+                  lockedCoins: 0,
+                },
+              })
 
-              create: {
-                userId: data.userId,
-                balanceCoins: data.coins,
-                lockedCoins: 0,
-              },
 
-            })
+              /**
+               * 2. CREATE TRANSACTION
+               */
+              await tx.walletTransaction.create({
+                data: {
+                  userWalletId: wallet.id,
+                  rechargePackId: data.rechargePackId,
+                  type: "CREDIT",
+                  coins: data.coins,
+                  amount: data.amount,
+                  description: "Recharge successful",
+                },
+              })
 
-
-            /**
-             * 2. Insert transaction
-             */
-            await tx.walletTransaction.create({
-
-              data: {
-
-                userWalletId: wallet.id,
-
-                rechargePackId: data.rechargePackId,
-
-                type: "CREDIT",
-
-                coins: data.coins,
-
-                amount: data.amount,
-
-                description: "Recharge successful",
-
-              },
-
-            })
-
-          })
+            },
+            {
+              timeout: 10000, // prevent hanging tx
+            }
+          )
 
 
           console.log(
             `SUCCESS: user=${data.userId}, coins=${data.coins}, payment=${data.paymentId}`
           )
 
-
-          /**
-           * ACK message
-           */
           channel.ack(msg)
-
 
         } catch (err) {
 
-          console.error("Processing failed:", err)
-
+          console.error("Processing failed:", err.message)
 
           /**
-           * Reject message (do not requeue)
+           * reject message
            */
           channel.nack(msg, false, false)
-
         }
 
       },
@@ -150,12 +138,14 @@ async function startConsumer() {
       }
     )
 
-
   } catch (err) {
 
     console.error("Consumer startup failed:", err)
 
-    process.exit(1)
+    /**
+     * Retry connection
+     */
+    setTimeout(startConsumer, 5000)
 
   }
 }
@@ -164,33 +154,35 @@ async function startConsumer() {
 /**
  * Graceful shutdown
  */
-process.on("SIGINT", async () => {
+async function shutdown() {
 
   console.log("Shutting down consumer...")
 
-  await prisma.$disconnect()
+  try {
 
-  await pool.end()
+    if (channel) await channel.close()
+
+    if (connection) await connection.close()
+
+    await prisma.$disconnect()
+
+    await pool.end()
+
+  } catch (err) {
+
+    console.error("Shutdown error:", err)
+
+  }
 
   process.exit(0)
+}
 
-})
 
-
-process.on("SIGTERM", async () => {
-
-  console.log("Shutting down consumer...")
-
-  await prisma.$disconnect()
-
-  await pool.end()
-
-  process.exit(0)
-
-})
+process.on("SIGINT", shutdown)
+process.on("SIGTERM", shutdown)
 
 
 /**
- * Start consumer
+ * Start Consumer
  */
 startConsumer()

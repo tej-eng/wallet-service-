@@ -4,7 +4,7 @@ generator client {
 
 datasource db {
   provider = "postgresql"
-  //url      = env("DATABASE_URL")
+ // url      = env("DATABASE_URL")
 }
 
 enum Gender {
@@ -111,9 +111,9 @@ model AstrologerApproved {
   isActive   Boolean @default(true)
   createdAt  DateTime @default(now())
 
-  @@index([name])           
-  @@index([experience])     
-  @@index([isActive])       
+  @@index([name])
+  @@index([experience])
+  @@index([isActive])
 }
 
 model Address {
@@ -127,9 +127,9 @@ model Address {
   country String
   pincode String
 
-  @@index([astrologerId])  
-  @@index([city])           
-  @@index([pincode])        
+  @@index([astrologerId])
+  @@index([city])
+  @@index([pincode])
 }
 
 model ExperiencePlatform {
@@ -140,8 +140,8 @@ model ExperiencePlatform {
   platformName String
   yearsWorked  Int
 
-  @@index([astrologerId])   
-  @@index([platformName])   
+  @@index([astrologerId])
+  @@index([platformName])
 }
 
 model Interview {
@@ -158,10 +158,10 @@ model Interview {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  @@index([astrologerId])                     
-  @@index([scheduledAt])                      
-  @@index([status])                           
-  @@unique([astrologerId, roundNumber])      
+  @@index([astrologerId])
+  @@index([scheduledAt])
+  @@index([status])
+  @@unique([astrologerId, roundNumber])
 }
 
 model AstrologerDocument {
@@ -178,9 +178,9 @@ model AstrologerDocument {
 
   createdAt DateTime @default(now())
 
-  @@index([astrologerId])                     
-  @@index([status])                           
-  @@unique([astrologerId, documentType])     
+  @@index([astrologerId])
+  @@index([status])
+  @@unique([astrologerId, documentType])
 }
 
 model AstrologerRejectionHistory {
@@ -194,8 +194,8 @@ model AstrologerRejectionHistory {
 
   createdAt DateTime @default(now())
 
-  @@index([astrologerId])  
-  @@index([stage])          
+  @@index([astrologerId])
+  @@index([stage])
 }
 
 enum AdminRole {
@@ -222,9 +222,9 @@ model Admin {
 
   role Role @relation(fields: [roleId], references: [id])
 
-  @@index([roleId])       
-  @@index([isActive])     
-  @@index([isDeleted])  
+  @@index([roleId])
+  @@index([isActive])
+  @@index([isDeleted])
 }
 
 model Role {
@@ -237,8 +237,8 @@ model Role {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
-  @@index([name])        
-  @@index([createdAt])   
+  @@index([name])
+  @@index([createdAt])
 }
 
 model Permission {
@@ -249,8 +249,8 @@ model Permission {
   createdAt   DateTime         @default(now())
   updatedAt   DateTime         @updatedAt
 
-  @@index([name])       
-  @@index([createdAt])  
+  @@index([name])
+  @@index([createdAt])
 }
 
 model RolePermission {
@@ -261,9 +261,9 @@ model RolePermission {
   role       Role       @relation(fields: [roleId], references: [id])
   permission Permission @relation(fields: [permissionId], references: [id])
 
-  @@unique([roleId, permissionId])   
-  @@index([roleId])                   
-  @@index([permissionId])             
+  @@unique([roleId, permissionId])
+  @@index([roleId])
+  @@index([permissionId])
 }
 
 model RechargePack {

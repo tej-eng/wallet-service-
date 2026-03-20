@@ -4,7 +4,7 @@ services:
     container_name: wallet-service
     restart: always
     environment:
-      DATABASE_URL: postgresql://postgres:postgres@dhwaniastro-postgres:5432/astro
+      DATABASE_URL: postgresql://postgres:dhwaniastrov2@123456@dhwaniastro-postgres:5432/astro
       RABBITMQ_URL: amqp://guest:guest@dhwaniastro-rabbitmq:5672
     ports:
       - "8003:8003"

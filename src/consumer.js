@@ -1,15 +1,15 @@
 // src/consumer.js
 
-import "dotenv/config"
-import amqp from "amqplib"
+import "dotenv/config";
+import amqp from "amqplib";
 
-import pkg from "@prisma/client"
-const { PrismaClient } = pkg
+import pkg from "@prisma/client";
+const { PrismaClient } = pkg;
 
-import pg from "pg"
-const { Pool } = pg
+import pg from "pg";
+const { Pool } = pg;
 
-import { PrismaPg } from "@prisma/adapter-pg"
+import { PrismaPg } from "@prisma/adapter-pg";
 
 /**
  * PostgreSQL Pool
@@ -17,12 +17,12 @@ import { PrismaPg } from "@prisma/adapter-pg"
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   max: 10,
-})
+});
 
 /**
  * Prisma Adapter
  */
-const adapter = new PrismaPg(pool)
+const adapter = new PrismaPg(pool);
 
 /**
  * Prisma Client
@@ -30,67 +30,166 @@ const adapter = new PrismaPg(pool)
 const prisma = new PrismaClient({
   adapter,
   log: ["error", "warn"],
-})
+});
 
-let connection
-let channel
+let connection;
+let channel;
 
-const QUEUE_NAME = "payment.success"
+const QUEUE_NAME = "payment.success";
 
 async function startConsumer() {
   try {
-    console.log("Connecting to RabbitMQ...")
+    console.log("Connecting to RabbitMQ...");
 
-    connection = await amqp.connect(process.env.RABBITMQ_URL)
+    connection = await amqp.connect(process.env.RABBITMQ_URL);
 
     connection.on("error", (err) => {
-      console.error("RabbitMQ connection error:", err.message)
-    })
+      console.error("RabbitMQ connection error:", err.message);
+    });
 
     connection.on("close", () => {
-      console.warn("RabbitMQ connection closed. Reconnecting...")
-      setTimeout(startConsumer, 5000)
-    })
+      console.warn("RabbitMQ connection closed. Reconnecting...");
+      setTimeout(startConsumer, 5000);
+    });
 
-    channel = await connection.createChannel()
+    channel = await connection.createChannel();
 
     /**
      * Ensure queue exists
      */
     await channel.assertQueue(QUEUE_NAME, {
       durable: true,
-    })
+    });
 
     /**
      * Prevent parallel processing
      */
-    channel.prefetch(1)
+    channel.prefetch(1);
 
-    console.log(`Waiting for messages in queue: ${QUEUE_NAME}`)
+    console.log(`Waiting for messages in queue: ${QUEUE_NAME}`);
 
     channel.consume(
       QUEUE_NAME,
       async (msg) => {
-        if (!msg) return
+        if (!msg) return;
 
-        let data
+        let data;
 
+        /**
+         * Parse RabbitMQ message
+         */
         try {
-          data = JSON.parse(msg.content.toString())
+          data = JSON.parse(msg.content.toString());
         } catch (err) {
-          console.error("Invalid JSON message")
-          channel.nack(msg, false, false)
-          return
+          console.error("Invalid JSON message");
+
+          channel.nack(msg, false, false);
+          return;
         }
 
-        console.log("Received message:", data)
+        console.log("Received message:", data);
 
         try {
           await prisma.$transaction(
             async (tx) => {
+              /**
+               * Find payment order
+               */
+              const paymentOrder = await tx.paymentOrder.findUnique({
+                where: {
+                  razorpayOrderId: data.orderId,
+                },
+              });
+
+              if (!paymentOrder) {
+                throw new Error(
+                  `Payment order not found: ${data.orderId}`
+                );
+              }
 
               /**
-               * UPSERT WALLET
+               * HANDLE FAILED PAYMENT
+               */
+              if (data.status === "failed") {
+                await tx.paymentOrder.update({
+                  where: {
+                    id: paymentOrder.id,
+                  },
+                  data: {
+                    status: "FAILED",
+                  },
+                });
+
+                console.log(
+                  `FAILED PAYMENT: order=${data.orderId}, payment=${data.paymentId}`
+                );
+
+                return;
+              }
+
+              /**
+               * ONLY HANDLE CAPTURED PAYMENTS
+               */
+              if (data.status !== "captured") {
+                console.log(
+                  `Ignoring unsupported payment status: ${data.status}`
+                );
+
+                return;
+              }
+
+              /**
+               * Prevent duplicate payment processing
+               */
+              const existingPayment = await tx.payment.findUnique({
+                where: {
+                  razorpayPaymentId: data.paymentId,
+                },
+              });
+
+              if (existingPayment) {
+                console.log(
+                  `Payment already processed: ${data.paymentId}`
+                );
+
+                return;
+              }
+
+              /**
+               * Update payment order status
+               */
+              await tx.paymentOrder.update({
+                where: {
+                  id: paymentOrder.id,
+                },
+                data: {
+                  status: "PAID",
+                },
+              });
+
+              /**
+               * Create payment record
+               */
+              const payment = await tx.payment.create({
+                data: {
+                  userId: data.userId,
+                  rechargePackId: data.rechargePackId,
+                  paymentOrderId: paymentOrder.id,
+
+                  amount: data.amount,
+                  coins: data.coins,
+
+                  provider: "RAZORPAY",
+
+                  razorpayOrderId: data.orderId,
+                  razorpayPaymentId: data.paymentId,
+
+                  status: "SUCCESS",
+                },
+              });
+
+              /**
+               * Upsert user wallet
                */
               const wallet = await tx.userWallet.upsert({
                 where: {
@@ -106,60 +205,79 @@ async function startConsumer() {
                   balanceCoins: data.coins,
                   lockedCoins: 0,
                 },
-              })
+              });
 
               /**
-               * CREATE WALLET TRANSACTION
+               * Prevent duplicate wallet transaction
+               */
+              const existingWalletTx =
+                await tx.walletTransaction.findFirst({
+                  where: {
+                    paymentId: payment.id,
+                    type: "CREDIT",
+                  },
+                });
+
+              if (existingWalletTx) {
+                console.log(
+                  `Wallet transaction already exists for payment=${payment.id}`
+                );
+
+                return;
+              }
+
+              /**
+               * Create wallet transaction
                */
               await tx.walletTransaction.create({
                 data: {
                   userWalletId: wallet.id,
                   rechargePackId: data.rechargePackId,
+                  paymentId: payment.id,
+
                   type: "CREDIT",
+
                   coins: data.coins,
                   amount: data.amount,
+
                   description: "Recharge successful",
                 },
-              })
+              });
+
+              console.log(
+                `SUCCESS: user=${data.userId}, coins=${data.coins}, payment=${data.paymentId}`
+              );
             },
             {
               timeout: 10000,
             }
-          )
-
-          console.log(
-            `SUCCESS: user=${data.userId}, coins=${data.coins}, payment=${data.paymentId}`
-          )
+          );
 
           /**
-           * Acknowledge message
+           * ACK message
            */
-          channel.ack(msg)
+          channel.ack(msg);
 
         } catch (err) {
-
-          console.error("Processing failed:", err)
+          console.error("Processing failed:", err);
 
           /**
-           * Reject message (do not requeue)
+           * Reject message (no requeue)
            */
-          channel.nack(msg, false, false)
+          channel.nack(msg, false, false);
         }
-
       },
       {
         noAck: false,
       }
-    )
-
+    );
   } catch (err) {
-
-    console.error("Consumer startup failed:", err.message)
+    console.error("Consumer startup failed:", err.message);
 
     /**
-     * Retry after 5 sec
+     * Retry connection after 5 sec
      */
-    setTimeout(startConsumer, 5000)
+    setTimeout(startConsumer, 5000);
   }
 }
 
@@ -167,32 +285,32 @@ async function startConsumer() {
  * Graceful shutdown
  */
 async function shutdown() {
-
-  console.log("Shutting down consumer...")
+  console.log("Shutting down consumer...");
 
   try {
+    if (channel) {
+      await channel.close();
+    }
 
-    if (channel) await channel.close()
+    if (connection) {
+      await connection.close();
+    }
 
-    if (connection) await connection.close()
+    await prisma.$disconnect();
 
-    await prisma.$disconnect()
-
-    await pool.end()
+    await pool.end();
 
   } catch (err) {
-
-    console.error("Shutdown error:", err)
-
+    console.error("Shutdown error:", err);
   }
 
-  process.exit(0)
+  process.exit(0);
 }
 
-process.on("SIGINT", shutdown)
-process.on("SIGTERM", shutdown)
+process.on("SIGINT", shutdown);
+process.on("SIGTERM", shutdown);
 
 /**
  * Start Consumer
  */
-startConsumer()
+startConsumer();

@@ -4,7 +4,7 @@ generator client {
 
 datasource db {
   provider = "postgresql"
-  //url      = env("DATABASE_URL")
+  url      = env("DATABASE_URL")
 }
 
 enum Gender {
@@ -73,6 +73,13 @@ enum PaymentStatus {
   PENDING
   SUCCESS
   FAILED
+}
+enum BookingStatus {
+  PENDING
+  ASSIGNED
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
 }
 
 enum PaymentOrderStatus {
@@ -156,6 +163,11 @@ model User {
   paymentOrders PaymentOrder[]
   sessions      Session[]
   reviews       Review[]
+  giftsSent GiftHistory[] @relation("UserGiftHistory")
+
+  follows AstrologerFollow[]
+  servicePaymentOrders ServicePaymentOrder[]
+  serviceBookings ServiceBooking[]
 
   @@unique([countryCode, mobile])
 }
@@ -278,6 +290,9 @@ model Astrologer {
   pricing          AstrologerPricing[]
   applications     AstrologerApplication[]
   offers AstrologerOffer[]
+  giftsReceived GiftHistory[] @relation("AstrologerGiftHistory")
+  followers AstrologerFollow[]
+  serviceBookings ServiceBooking[]
 
   @@index([rating])
   @@index([experience])
@@ -509,23 +524,33 @@ model Category {
   id        String    @id @default(cuid())
   name      String    @unique
   slug      String    @unique
+  image     String?
+
   createdAt DateTime  @default(now())
+
   services  Service[]
 }
 
+
 model Service {
-  id          String      @id @default(cuid())
+  id          String   @id @default(cuid())
+
   name        String
-  slug        String      @unique
-  type        ServiceType
-  categoryId  String?
+  slug        String   @unique
+
   image       String?
   description String?
   longText    String?
+
   price       Float?
-  createdAt   DateTime    @default(now())
-  updatedAt   DateTime    @updatedAt
-  category    Category?   @relation(fields: [categoryId], references: [id])
+
+  categoryId  String?
+
+  category    Category? @relation(fields: [categoryId], references: [id])
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  bookings ServiceBooking[]
 }
 
 model Gift {
@@ -534,6 +559,7 @@ model Gift {
   amount    Float
   image     String?
   status    String   @default("active")
+  giftHistories GiftHistory[]
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
@@ -917,12 +943,15 @@ model Notification {
 
 model PricingConfig {
   id String @id @default(uuid())
+  isGlobalOfferEnabled Boolean @default(false)
+  globalChatPrice      Int     @default(0)
+  globalCallPrice      Int     @default(0)
 
-  isFirstOfferEnabled Boolean @default(true)
+  isFirstOfferEnabled Boolean @default(false)
   firstChatPrice      Int     @default(0)
   firstCallPrice      Int     @default(0)
 
-  isSecondOfferEnabled Boolean @default(true)
+  isSecondOfferEnabled Boolean @default(false)
   secondChatPrice      Int     @default(0)
   secondCallPrice      Int     @default(0)
 }
@@ -1218,4 +1247,114 @@ model AstrologerOffer {
   @@index([astrologerId])
   @@index([offerId])
   @@index([isActive])
+}
+
+model GiftHistory {
+  id           String   @id @default(cuid())
+
+  userId       String
+  astrologerId String
+  giftId       String
+
+  giftName     String
+  giftPrice    Float
+
+  createdAt    DateTime @default(now())
+
+  user         User       @relation("UserGiftHistory", fields: [userId], references: [id])
+
+  astrologer   Astrologer @relation("AstrologerGiftHistory", fields: [astrologerId], references: [id])
+
+  gift         Gift       @relation(fields: [giftId], references: [id])
+
+  @@index([userId])
+  @@index([astrologerId])
+  @@index([giftId])
+}
+
+model AstrologerFollow {
+  id String @id @default(uuid())
+
+  userId String
+  astrologerId String
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  astrologer Astrologer @relation(fields: [astrologerId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@unique([userId, astrologerId])
+
+  @@index([userId])
+
+  @@index([astrologerId])
+}
+
+model ServiceBooking {
+  id String @id @default(cuid())
+
+  userId String
+  user User @relation(fields: [userId], references: [id])
+
+  serviceId String
+  service Service @relation(fields: [serviceId], references: [id])
+
+  astrologerId String?
+  astrologer Astrologer? @relation(fields: [astrologerId], references: [id])
+
+  name String
+  email String
+  phone String
+
+  dob String
+  tob String
+  pob String
+
+  gender String?
+  concern String?
+
+  amount Float
+
+  paymentStatus PaymentStatus @default(PENDING)
+  bookingStatus BookingStatus @default(PENDING)
+
+  paymentOrders ServicePaymentOrder[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+  @@index([serviceId])
+  @@index([astrologerId])
+  @@index([paymentStatus])
+  @@index([bookingStatus])
+}
+
+model ServicePaymentOrder {
+  id String @id @default(uuid())
+
+  userId String
+  user User @relation(fields: [userId], references: [id])
+
+  bookingId String
+  booking ServiceBooking @relation(fields: [bookingId], references: [id])
+
+  razorpayOrderId String? @unique
+
+  totalAmount Float
+
+  walletAmount Float @default(0)
+
+  payableAmount Float
+
+  status PaymentOrderStatus @default(CREATED)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+  @@index([bookingId])
+  @@index([razorpayOrderId])
+  @@index([status])
 }

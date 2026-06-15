@@ -95,6 +95,82 @@ async function startConsumer() {
               /**
                * Find payment order
                */
+
+              if (data.serviceType === "SERVICE") {
+                const servicePaymentOrder =
+                  await tx.servicePaymentOrder.findUnique({
+                    where: {
+                      razorpayOrderId: data.orderId,
+                    },
+                  });
+
+                if (!servicePaymentOrder) {
+                  throw new Error(
+                    `Service payment order not found: ${data.orderId}`,
+                  );
+                }
+
+                // Failed payment
+                if (data.status === "failed") {
+                  await tx.servicePaymentOrder.update({
+                    where: {
+                      id: servicePaymentOrder.id,
+                    },
+                    data: {
+                      status: "FAILED",
+                    },
+                  });
+
+                  console.log(`SERVICE PAYMENT FAILED: order=${data.orderId}`);
+
+                  return;
+                }
+
+                // Ignore non-captured payments
+                if (data.status !== "captured") {
+                  console.log(
+                    `Ignoring unsupported service payment status: ${data.status}`,
+                  );
+
+                  return;
+                }
+
+                // Prevent duplicate processing
+                if (servicePaymentOrder.status === "PAID") {
+                  console.log(
+                    `Service payment already processed: ${data.orderId}`,
+                  );
+
+                  return;
+                }
+
+                // Mark payment order paid
+                await tx.servicePaymentOrder.update({
+                  where: {
+                    id: servicePaymentOrder.id,
+                  },
+                  data: {
+                    status: "PAID",
+                  },
+                });
+
+                // Update booking
+                await tx.serviceBooking.update({
+                  where: {
+                    id: servicePaymentOrder.bookingId,
+                  },
+                  data: {
+                    paymentStatus: "SUCCESS",
+                    bookingStatus: "PENDING", // or ASSIGNED
+                  },
+                });
+
+                console.log(
+                  `SERVICE PAYMENT SUCCESS booking=${servicePaymentOrder.bookingId}`,
+                );
+
+                return;
+              }
               const paymentOrder = await tx.paymentOrder.findUnique({
                 where: {
                   razorpayOrderId: data.orderId,
@@ -102,9 +178,7 @@ async function startConsumer() {
               });
 
               if (!paymentOrder) {
-                throw new Error(
-                  `Payment order not found: ${data.orderId}`
-                );
+                throw new Error(`Payment order not found: ${data.orderId}`);
               }
 
               /**
@@ -121,7 +195,7 @@ async function startConsumer() {
                 });
 
                 console.log(
-                  `FAILED PAYMENT: order=${data.orderId}, payment=${data.paymentId}`
+                  `FAILED PAYMENT: order=${data.orderId}, payment=${data.paymentId}`,
                 );
 
                 return;
@@ -132,7 +206,7 @@ async function startConsumer() {
                */
               if (data.status !== "captured") {
                 console.log(
-                  `Ignoring unsupported payment status: ${data.status}`
+                  `Ignoring unsupported payment status: ${data.status}`,
                 );
 
                 return;
@@ -148,9 +222,7 @@ async function startConsumer() {
               });
 
               if (existingPayment) {
-                console.log(
-                  `Payment already processed: ${data.paymentId}`
-                );
+                console.log(`Payment already processed: ${data.paymentId}`);
 
                 return;
               }
@@ -210,17 +282,16 @@ async function startConsumer() {
               /**
                * Prevent duplicate wallet transaction
                */
-              const existingWalletTx =
-                await tx.walletTransaction.findFirst({
-                  where: {
-                    paymentId: payment.id,
-                    type: "CREDIT",
-                  },
-                });
+              const existingWalletTx = await tx.walletTransaction.findFirst({
+                where: {
+                  paymentId: payment.id,
+                  type: "CREDIT",
+                },
+              });
 
               if (existingWalletTx) {
                 console.log(
-                  `Wallet transaction already exists for payment=${payment.id}`
+                  `Wallet transaction already exists for payment=${payment.id}`,
                 );
 
                 return;
@@ -245,19 +316,18 @@ async function startConsumer() {
               });
 
               console.log(
-                `SUCCESS: user=${data.userId}, coins=${data.coins}, payment=${data.paymentId}`
+                `SUCCESS: user=${data.userId}, coins=${data.coins}, payment=${data.paymentId}`,
               );
             },
             {
               timeout: 10000,
-            }
+            },
           );
 
           /**
            * ACK message
            */
           channel.ack(msg);
-
         } catch (err) {
           console.error("Processing failed:", err);
 
@@ -269,7 +339,7 @@ async function startConsumer() {
       },
       {
         noAck: false,
-      }
+      },
     );
   } catch (err) {
     console.error("Consumer startup failed:", err.message);
@@ -299,7 +369,6 @@ async function shutdown() {
     await prisma.$disconnect();
 
     await pool.end();
-
   } catch (err) {
     console.error("Shutdown error:", err);
   }

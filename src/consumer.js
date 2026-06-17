@@ -161,7 +161,7 @@ async function startConsumer() {
                   },
                   data: {
                     paymentStatus: "SUCCESS",
-                    bookingStatus: "PENDING", // or ASSIGNED
+                    bookingStatus: "SUCCESS", // or ASSIGNED
                   },
                 });
 

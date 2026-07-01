@@ -41,6 +41,9 @@ enum ServiceType {
 enum TransactionType {
   CREDIT
   DEBIT
+  REFUND
+  CASHBACK
+  DISCOUNT
 }
 
 enum WithdrawalStatus {

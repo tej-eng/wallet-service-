@@ -319,24 +319,30 @@ async function startConsumer() {
                 },
               });
 
-                        if (
-            data.couponType === "CASHBACK" &&
-            Number(data.cashback) > 0
-            ) {
-            await tx.walletTransaction.create({
-              data: {
-                userWalletId: wallet.id,
-                paymentId: payment.id,
+              if (data.couponType === "CASHBACK" && Number(data.cashback) > 0) {
+                const cashbackExists = await tx.walletTransaction.findFirst({
+                  where: {
+                    paymentId: payment.id,
+                    type: "CASHBACK",
+                  },
+                });
 
-                type: "CREDIT",
+                if (!cashbackExists) {
+                  await tx.walletTransaction.create({
+                    data: {
+                      userWalletId: wallet.id,
+                      paymentId: payment.id,
 
-                coins: Number(data.cashback),
-                amount: 0,
+                      type: "CASHBACK",
 
-                description: `Cashback (${data.couponCode})`,
-              },
-            });
-            }
+                      coins: Number(data.cashback),
+                      amount: 0,
+
+                      description: `Cashback (${data.couponCode})`,
+                    },
+                  });
+                }
+              }
 
               console.log(
                 `SUCCESS: user=${data.userId}, coins=${data.coins}, payment=${data.paymentId}`,

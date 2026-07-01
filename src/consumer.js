@@ -263,18 +263,22 @@ async function startConsumer() {
               /**
                * Upsert user wallet
                */
+              const totalCoins =
+                data.coins +
+                (data.couponType === "CASHBACK" ? data.cashback : 0);
+
               const wallet = await tx.userWallet.upsert({
                 where: {
                   userId: data.userId,
                 },
                 update: {
                   balanceCoins: {
-                    increment: data.coins,
+                    increment: totalCoins,
                   },
                 },
                 create: {
                   userId: data.userId,
-                  balanceCoins: data.coins,
+                  balanceCoins: totalCoins,
                   lockedCoins: 0,
                 },
               });
@@ -314,6 +318,25 @@ async function startConsumer() {
                   description: "Recharge successful",
                 },
               });
+
+                        if (
+            data.couponType === "CASHBACK" &&
+            Number(data.cashback) > 0
+            ) {
+            await tx.walletTransaction.create({
+              data: {
+                userWalletId: wallet.id,
+                paymentId: payment.id,
+
+                type: "CREDIT",
+
+                coins: Number(data.cashback),
+                amount: 0,
+
+                description: `Cashback (${data.couponCode})`,
+              },
+            });
+            }
 
               console.log(
                 `SUCCESS: user=${data.userId}, coins=${data.coins}, payment=${data.paymentId}`,

@@ -319,6 +319,9 @@ async function startConsumer() {
                 },
               });
 
+              // ======================
+              // CASHBACK
+              // ======================
               if (data.couponType === "CASHBACK" && Number(data.cashback) > 0) {
                 const cashbackExists = await tx.walletTransaction.findFirst({
                   where: {
@@ -328,10 +331,21 @@ async function startConsumer() {
                 });
 
                 if (!cashbackExists) {
+                  // Credit cashback coins
+                  await tx.userWallet.update({
+                    where: { id: wallet.id },
+                    data: {
+                      balanceCoins: {
+                        increment: Number(data.cashback),
+                      },
+                    },
+                  });
+
                   await tx.walletTransaction.create({
                     data: {
                       userWalletId: wallet.id,
                       paymentId: payment.id,
+                      rechargePackId: data.rechargePackId,
 
                       type: "CASHBACK",
 
@@ -339,6 +353,35 @@ async function startConsumer() {
                       amount: 0,
 
                       description: `Cashback (${data.couponCode})`,
+                    },
+                  });
+                }
+              }
+
+              // ======================
+              // DISCOUNT
+              // ======================
+              if (data.couponType === "DISCOUNT" && Number(data.discount) > 0) {
+                const discountExists = await tx.walletTransaction.findFirst({
+                  where: {
+                    paymentId: payment.id,
+                    type: "DISCOUNT",
+                  },
+                });
+
+                if (!discountExists) {
+                  await tx.walletTransaction.create({
+                    data: {
+                      userWalletId: wallet.id,
+                      paymentId: payment.id,
+                      rechargePackId: data.rechargePackId,
+
+                      type: "DISCOUNT",
+
+                      coins: 0,
+                      amount: Number(data.discount),
+
+                      description: `Discount Applied (${data.couponCode})`,
                     },
                   });
                 }

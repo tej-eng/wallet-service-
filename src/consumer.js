@@ -378,8 +378,8 @@ async function startConsumer() {
 
                       type: "DISCOUNT",
 
-                      coins: 0,
-                      amount: Number(data.discount),
+                      coins: Number(data.discount),
+                      amount: 0,
 
                       description: `Discount Applied (${data.couponCode})`,
                     },
